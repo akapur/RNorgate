@@ -1,4 +1,4 @@
-//#include <Rcpp.h>
+#include <Rcpp.h>
 
 #include <string>
 #include <map>
@@ -11,27 +11,12 @@
 #include <sys/param.h>
 
 
-void stop(char *error)
+void stop(const char *error)
 {
     printf("%s\n", error);
 }
 
 
-
-
-struct DataFileRep
-{
-    std::string symbol;
-    std::string name;
-
-    int fileNum;        // The file name is F<fileNum>
-    int numFld;         // Number of 4 byte data fields
-    char flag;          // Either ' '  or '*'
-    char periodicity;   // 'D', 'W', 'M' etc
-
-    //date firstDate;     // First date on which there is data
-    //date lastDate;      // Last date on which there is data
-};
 
 
 class NorgateDirectory
@@ -46,40 +31,52 @@ public:
     {
     };
 
-    int find_emaster_files(char *dirName, std::set< std::string > &emasters)
+
+    int add_directory(const char *dir_name)
     {
         char error[1024];
 
-        int cur_dir = open(".", O_RDONLY);
-        if(cur_dir < 0)
+        std::set< std::string > emasters_found;
+        int fs_stat = find_emaster_files(dir_name, emasters_found);
+        if(0 != fs_stat)
         {
-            sprintf(error, "Could not open current directory. Errno: %d.", errno);
+            sprintf(error,
+                   "Could not search for emaster_files in dir %s. Errno: %d",
+                   dir_name, errno);
             stop(error);
-            return errno;
+            return fs_stat;
+        }
+        for(auto itr = emasters_found.begin(); itr != emasters_found.end(); ++itr)
+        {
+            int add_stat = add_emaster_file((itr->c_str()));
+            if(0 != add_stat)
+            {
+                sprintf(error, "Could not read emaster file %s, Errno: %d",
+                        itr->c_str(), errno);
+                stop(error);
+                return add_stat;
+            }
         }
 
+        return 0;
+    };
 
-        char data_dir_name[MAXPATHLEN];
-        int data_dir = open(dirName, O_RDONLY);
-        if(data_dir < 0)
-        {
-            sprintf(error, "Cannot open directory %s. Errno: %d.", dirName, errno);
-            stop(error);
-            return errno;
+    int find_emaster_files(const char *dir_name, std::set< std::string > &emasters)
+    {
+        char error[1024];
 
-        }
-        if(get_absolute_path(data_dir, cur_dir, data_dir_name))
+        char abs_dir_name[MAXPATHLEN];
+        if(get_absolute_path(dir_name, abs_dir_name))
         {
             sprintf(error, "Error in get_absolute_path");
             stop(error);
             return errno;
         }
-        close(data_dir);
 
-        DIR  *dp = opendir(dirName);
+        DIR  *dp = opendir(abs_dir_name);
         if(NULL == dp)
         {
-            sprintf(error, "Cannot open directory: %s, Errno: %d.", dirName, errno);
+            sprintf(error, "Cannot open directory: %s, Errno: %d.", dir_name, errno);
             stop(error);
             return errno;
         }
@@ -88,7 +85,7 @@ public:
         while((dirp = readdir(dp)) != NULL)
         {
             char full_path[MAXPATHLEN];
-            strcpy(full_path, data_dir_name);
+            strcpy(full_path, abs_dir_name);
             strcat(full_path, "/"); 
             strcat(full_path, dirp->d_name);
 
@@ -125,86 +122,115 @@ public:
             stop(error);
             return errno;
         }
-        if(0 != fchdir(cur_dir))
-        {
-            sprintf(error, "Error on fchdir.  Errno: %d.", errno);
-            stop(error);
-            return errno;
-        }
-        close(cur_dir);
         return 0;
     };
 
-    int add_directory(std::string dirName)
-    {
-        return 0;
-    };
 
-    int add_emaster_file(char *fileName)
+    int add_emaster_file(const char *file_name)
     {
         char error[1024];
-        FILE* emaster = fopen(fileName, "rb");
+
+        size_t file_name_len = strlen(file_name);
+        char dir_name[MAXPATHLEN];
+        strncpy(dir_name, file_name, (file_name_len-7));
+        dir_name[file_name_len-7] = '\0';
+
+        char abs_dir_name[MAXPATHLEN];
+        if(0 != get_absolute_path(dir_name, abs_dir_name))
+        {
+            sprintf(error, "Error in get_absolute_path for dir %s, Errno: %d.", dir_name, errno);
+        }
+
+        char only_file_name[128];
+        strncpy(only_file_name, &(file_name[file_name_len-7]), 7);
+        char abs_file_name_char[MAXPATHLEN];
+        sprintf(abs_file_name_char, "%s/%s", abs_dir_name, only_file_name);
+
+
+        std::string abs_file_name = abs_file_name_char;
+        if(emaster_files.find(abs_file_name) != emaster_files.end())
+        {
+            sprintf(error, "Already opened file %s", abs_file_name_char);
+            stop(error);
+            return 0;
+        }
+
+        FILE* emaster = fopen(file_name, "rb");
         if(NULL == emaster)
         {
-            sprintf(error, "Could not open file: %s, errno: %d", fileName, errno);
+            sprintf(error, "Could not open emaster file: %s, errno: %d", file_name, errno);
             stop(error);
             return errno;
         }
 
-        printf("%s\n", "Reading emaster header.");
         emaster_header header;
         if(!read_emaster_header(&header, emaster))
         {
-            sprintf(error, "Could not read header of file %s. Errno: %d", fileName, errno);
+            sprintf(error, "Could not read header of file %s. Errno: %d", file_name, errno);
             stop(error);
             return errno;
         }
-        printf("%s\n", "Done reading emaster header.");
-        char output_line[1024];
-        sprintf(output_line, "%hu, %hu\n", header.num_files, header.max_fnum);
-        printf("%s", output_line);
 
         int num_files_read = 0;
         emaster_record rec;
+        rec.symbol[0] = '\0';
+        rec.short_name[0] = '\0';
+        rec.long_name[0] = '\0';
         while(read_emaster_record(&rec, emaster))
         {
             ++num_files_read;
 
-            /*
-            float first_date, last_date;
-            if(fmsbintoieee(&(rec.first_date_ms), &first_date) != 0)
+            if(rec.symbol[0] != '\0')
             {
-                sprintf(error, "Could not convert first date to IEEE float.");
-                stop(error);
-                return -1;
+                MSDataFile data_file;
+                data_file.symbol = rec.symbol;
+
+                if(0 == strlen(rec.long_name))
+                {
+                    data_file.name = rec.short_name;
+                }
+                else
+                {
+                    data_file.name = rec.long_name;
+                }
+
+                char full_file_name[MAXPATHLEN];
+                sprintf(full_file_name, "%s/F%d.dat", abs_dir_name, rec.f_number);
+                data_file.file_name = full_file_name;
+
+                data_file.num_fields = rec.tot_fields;
+                data_file.flag = rec.flag;
+                data_file.periodicity = rec.periodicity;
+
+                //rec.first_date_ms,
+                //rec.last_date_ms,
+
+                if(symbol_map.find(data_file.symbol) == symbol_map.end())
+                {
+                    symbol_map[data_file.symbol] = data_file;
+                }
+                if(name_map.find(data_file.name) == name_map.end())
+                {
+                    name_map[data_file.name] = data_file;
+                }
+
             }
-            if(fmsbintoieee(&(rec.last_date_ms), &last_date) != 0)
-            {
-                sprintf(error, "Could not convert last date to IEEE float.");
-                stop(error);
-                return -1;
-            }
-            */
 
-
-
-            sprintf(
-                output_line, 
-                "FNum: %hhu, TotFld: %hhu, Flag: %c, Sym: %s, SNm: %s, Prd: %c, FD: %f, LD: %f, LNm: %s\n\n\n\n",
-                rec.f_number,
-                rec.tot_fields,
-                rec.flag,
-                rec.symbol,
-                rec.short_name,
-                rec.periodicity,
-                rec.first_date_ms,
-                rec.last_date_ms,
-                rec.long_name);
-            printf("%s", output_line);
+            rec.symbol[0] = '\0';
+            rec.short_name[0] = '\0';
+            rec.long_name[0] = '\0';
+ 
         }
-        printf("Read %d lines.\n", num_files_read);
-        printf("Expection %d records with max_fnum = %d.\n",
-               header.num_files, header.max_fnum);
+
+        if(num_files_read != header.num_files)
+        {
+            sprintf(error,
+                    "Header says %d files but found %d records in file %s.",
+                    header.num_files, num_files_read, file_name);
+            stop(error);
+            return num_files_read;
+        }
+        emaster_files.insert(abs_file_name);
 
         return 0;
     };
@@ -212,6 +238,24 @@ public:
 
 
 private:
+
+
+    struct MSDataFile
+    {
+        std::string symbol;
+        std::string name;
+
+        std::string file_name;
+
+        int num_fields;             // Number of 4 byte data fields
+        char flag;                  // Either ' '  or '*'
+        char periodicity;           // 'D', 'W', 'M' etc
+
+        //date firstDate;             // First date on which there is data
+        //date lastDate;              // Last date on which there is data
+    };
+
+
 
     // Structure representing the header of an emaster file
     struct emaster_header
@@ -272,13 +316,13 @@ private:
 
     void reset_refdata()
     {;
-        symbolMap.clear();
-        nameMap.clear();
+        symbol_map.clear();
+        name_map.clear();
         emaster_files.clear();
     };
 
-    std::map< std::string , DataFileRep > symbolMap;
-    std::map< std::string , DataFileRep > nameMap;
+    std::map< std::string , MSDataFile > symbol_map;
+    std::map< std::string , MSDataFile> name_map;
     std::set< std::string > emaster_files;
 
 
@@ -291,42 +335,63 @@ private:
     // dir: File descriptor for the directory
     // orig_dir: File descriptor for the current working dir
     // abs_path: a pointer that will be filled in with the absolute path
-    int get_absolute_path(int dir, int orig_dir, char *abs_path)
+    int get_absolute_path(const char *dir_name, char *abs_path)
     {
         char error[1024];
 
-        if(0 != fchdir(dir))
+        int cur_dir = open(".", O_RDONLY);
+        if(cur_dir < 0)
         {
-            sprintf(error, "Error on fchdir.  Errno: %d", errno);
+            sprintf(error, "Could not open current directory. Errno: %d.", errno);
+            stop(error);
+            return errno;
+        }
+
+        int data_dir = open(dir_name, O_RDONLY);
+        if(data_dir < 0)
+        {
+            close(cur_dir);
+            sprintf(error, "Cannot open directory %s. Errno: %d.", dir_name, errno);
+            stop(error);
+            return errno;
+
+        }
+
+        if(0 != fchdir(data_dir))
+        {
+            close(cur_dir);
+            close(data_dir);
+            sprintf(error, "Error on fchdir to %s.  Errno: %d", dir_name, errno);
             stop(error);
             return errno;
         }
 
         if(getwd(abs_path) == NULL)
         {
+            close(cur_dir);
+            close(data_dir);
             sprintf(error, "Error on getwd, %s, Errno: %d", abs_path, errno);
             stop(error);
             return errno;
         }
 
-        if(0 != fchdir(orig_dir))
+        if(0 != fchdir(cur_dir))
         {
+            close(cur_dir);
+            close(data_dir);
             sprintf(error, "Error on fchdir.  Errno: %d", errno);
             stop(error);
             return errno;
         }
+        close(cur_dir);
+        close(data_dir);
+
         return 0;
     };
 
 
-    int fmsbintoieee(float *src4, float *dest4)
+    float fmsbin2ieee(const unsigned char *msbin)
     {
-        unsigned char *msbin = (unsigned char *)src4;
-        unsigned char *ieee = (unsigned char *)dest4;
-        unsigned char sign = 0x00;
-        unsigned char ieee_exp = 0x00;
-        int i;
-
         /* MS Binary Format                         */
         /* byte order =>    m3 | m2 | m1 | exponent */
         /* m1 is most significant byte => sbbb|bbbb */
@@ -335,8 +400,6 @@ private:
         /*      s = sign bit                        */
         /*      b = bit                             */
 
-        sign = msbin[2] & 0x80;      /* 1000|0000b  */
-
         /* IEEE Single Precision Float Format       */
         /*    m3        m2        m1     exponent   */
         /* mmmm|mmmm mmmm|mmmm emmm|mmmm seee|eeee  */
@@ -344,78 +407,44 @@ private:
         /*          e = exponent bit                */
         /*          m = mantissa bit                */
 
-        for (i=0; i<4; i++)
+        float result;
+        unsigned char *ieee =    (unsigned char *) &result;
+        unsigned char  sign     = 0x00;
+        unsigned char  ieee_exp = 0x00;
+        int i;
+
+        for(i = 0; i < 4; i++)
         {
             ieee[i] = 0;
         }
 
         /* any msbin w/ exponent of zero = zero */
-        if (msbin[3] == 0)
+        if(msbin[3] == 0)
         {
             return 0;
         }
 
-        ieee[3] |= sign;
-
-        /* MBF is bias 128 and IEEE is bias 127. ALSO, MBF places   */
-        /* the decimal point before the assumed bit, while          */
-        /* IEEE places the decimal point after the assumed bit.     */
-
-        ieee_exp = msbin[3] - 2;    /* actually, msbin[3]-1-128+127 */
-
-        /* the first 7 bits of the exponent in ieee[3] */
-        ieee[3] |= ieee_exp >> 1;
-
-        /* the one remaining bit in first bin of ieee[2] */
-        ieee[2] |= ieee_exp << 7;
-
-        /* 0111|1111b : mask out the msbin sign bit */
-        ieee[2] |= msbin[2] & 0x7f;
-
-        ieee[1] = msbin[1];
-        ieee[0] = msbin[0];
-
-        return 0;
-    }
-
-    float BasicToIEEE(unsigned char *value)
-    {
-        float result;
-        unsigned char *msbin =   (unsigned char *)  value;
-        unsigned char *ieee =    (unsigned char *) &result;
-        unsigned char  sign     = 0x00;
-        unsigned char  ieee_exp = 0x00;
-        int i;
-        /* MS Binary Format                         */
-        /* byte order =>    m3 | m2 | m1 | exponent */
-        /* m1 is most significant byte => sbbb|bbbb */
-        /* m3 is the least significant byte         */
-        /*      m = mantissa byte                   */
-        /*      s = sign bit                        */
-        /*      b = bit                             */
         sign = msbin[2] & 0x80;      /* 1000|0000b  */
-        /* IEEE Single Precision Float Format       */
-        /*    m3        m2        m1     exponent   */
-        /* mmmm|mmmm mmmm|mmmm emmm|mmmm seee|eeee  */
-        /*          s = sign bit                    */
-        /*          e = exponent bit                */
-        /*          m = mantissa bit                */
-        for (i=0; i<4; i++) ieee[i] = 0;
-        /* any msbin w/ exponent of zero = zero */
-        if (msbin[3] == 0) return 0;
         ieee[3] |= sign;
+
         /* MBF is bias 128 and IEEE is bias 127. ALSO, MBF places   */
         /* the decimal point before the assumed bit, while          */
         /* IEEE places the decimal point after the assumed bit.     */
-        ieee_exp = msbin[3] - 2;    /* actually, msbin[3]-1-128+127 */
+
+        /* actually, msbin[3]-1-128+127 */
+        ieee_exp = msbin[3] - 2;
+
         /* the first 7 bits of the exponent in ieee[3] */
         ieee[3] |= ieee_exp >> 1;
+
         /* the one remaining bit in first bin of ieee[2] */
         ieee[2] |= ieee_exp << 7;
+
         /* 0111|1111b : mask out the msbin sign bit */
         ieee[2] |= msbin[2] & 0x7f;
         ieee[1] = msbin[1];
         ieee[0] = msbin[0];
+
         return (result);
     };
 
@@ -426,6 +455,8 @@ private:
 int main()
 {
     NorgateDirectory *nd = new NorgateDirectory();
+
+    /*
     std::set< std::string > em_files;
 
     int ret_val = nd->find_emaster_files("/Volumes/BigData2/Norgate/Data/Futures", em_files);
@@ -433,9 +464,7 @@ int main()
     {
         printf("%s\n", itr->c_str());
     }
-
-    printf("Sizeof unsigned short = %zu\n", sizeof(unsigned short));
-    printf("Sizeof int = %zu\n", sizeof(int));
+    */
 
     nd->add_emaster_file("/Volumes/BigData2/Norgate/Data/Forex/emaster");
 }
