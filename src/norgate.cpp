@@ -38,7 +38,10 @@ public:
             throw(Rcpp::exception(error));
             return fs_stat;
         }
-        for(auto itr = emasters_found.begin(); itr != emasters_found.end(); ++itr)
+        std::set< std::string >::iterator itr     = emasters_found.begin();
+        std::set< std::string >::iterator end_itr = emasters_found.end();
+
+        for(; itr != end_itr; ++itr)
         {
             int add_stat = add_emaster_file((itr->c_str()));
             if(0 != add_stat)
@@ -191,9 +194,11 @@ public:
                 sprintf(full_file_name, "%s/F%d.dat", abs_dir_name, rec.f_number);
                 data_file.file_name = full_file_name;
 
-                data_file.num_fields = rec.tot_fields;
-                data_file.flag = rec.flag;
-                data_file.periodicity = rec.periodicity;
+                data_file.num_fields     = rec.tot_fields;
+                data_file.flag[0]        = rec.flag;
+                data_file.flag[1]        = '\0';
+                data_file.periodicity[0] = rec.periodicity;
+                data_file.periodicity[1] = '\0';
 
                 long int first_yyyymmdd = lroundf(rec.first_date_ms)+19000000;
                 data_file.first_date = yyyymmdd_to_date(first_yyyymmdd);
@@ -246,25 +251,29 @@ public:
         std::string file_name;  // File containing data
 
         int num_fields;         // Number of 4 byte data fields
-        char flag;              // Either ' '  or '*'
-        char periodicity;       // 'D', 'W', 'M' etc
+        char flag[2];           // Either ' '  or '*'
+        char periodicity[2];    // 'D', 'W', 'M' etc
 
         Rcpp::Date first_date;   // First date on which there is data
         Rcpp::Date last_date;    // Last date on which there is data
     };
 
-    std::set< MSDataFile > get_assets()
+    std::vector< MSDataFile > get_assets()
     {
-        std::set< MSDataFile > assets;
-        for(auto itr = symbol_map.begin(); itr != symbol_map.end(); ++itr)
+        std::vector< MSDataFile > assets;
+        std::map< std::string , MSDataFile >::iterator itr     = symbol_map.begin();
+        std::map< std::string , MSDataFile >::iterator end_itr = symbol_map.end();
+        for(; itr != end_itr; ++itr)
         {
-            assets.insert(itr->second);
+            assets.push_back(itr->second);
         }
+        return assets;
     };
 
     bool get_asset_by_ticker(const std::string &ticker, MSDataFile& data_file)
     {
-        auto itr asset = symbol_map.find(ticker);
+        std::map< std::string , MSDataFile >::iterator itr =
+            symbol_map.find(ticker);
         if(itr != symbol_map.end())
         {
             data_file = itr->second;
@@ -275,7 +284,7 @@ public:
 
     bool get_asset_by_name(const std::string &name, MSDataFile& data_file)
     {
-        auto itr = name_map.find(name);
+        std::map< std::string , MSDataFile >::iterator itr = name_map.find(name);
         if(itr != name_map.end())
         {
             data_file = itr->second;
@@ -293,9 +302,9 @@ public:
         float close;
         float volume;
         float open_interest;
-    }
+    };
 
-    int get_7_field_data(const char* file_name, std::vector< MS7FieldRec > &asset_data)
+    int get_7_field_data(const char* file_name, std::vector< NorgateDirectory::MS7FieldRec > &asset_data)
     {
         asset_data.clear();
 
@@ -319,45 +328,29 @@ public:
         int num_records_read = 0;
         ms_7_field_record rec;
 
-        rec.date[0] = '\0';
-        rec.date[1] = '\0';
-        rec.date[2] = '\0';
-        rec.date[3] = '\0';
-        memcpy(rec.open,          rec.date, 4*sizeof(rec.date));
-        memcpy(rec.high,          rec.date, 4*sizeof(rec.date));
-        memcpy(rec.low,           rec.date, 4*sizeof(rec.date));
-        memcpy(rec.close,         rec.date, 4*sizeof(rec.date));
-        memcpy(rec.volume,        rec.date, 4*sizeof(rec.date));
-        memcpy(rec.open_interest, rec.date, 4*sizeof(rec.date));
-
-        while(read_emaster_record(&rec, emaster))
+        while(read_7_field_rec(&rec, data_file))
         {
-            if(! (rec.date[0] == '\0') &&
-                 (rec.date[1] == '\0') &&
-                 (rec.date[2] == '\0') &&
-                 (rec.date[3] == '\0') )
-            {
-                ++num_records_read;
+            MS7FieldRec obs;
 
-                MS7FieldRec obs;
-                obs.date          = ieee_float_to_date(fmsbin2ieee(rec.date));
-                obs.open          = fmsbin2ieee(rec.open);
-                obs.high          = fmsbin2ieee(rec.high);
-                obs.low           = fmsbin2ieee(rec.low);
-                obs.close         = fmsbin2ieee(rec.close);
-                obs.volume        = fmsbin2ieee(rec.volume);
-                obs.open_interest = fmsbin2ieee(rec.open_interest);
-                asset_data.push_back(obs);
-            }
+            obs.date          = ieee_float_to_date(fmsbin2ieee(rec.date));
+            obs.open          = fmsbin2ieee(rec.open);
+            obs.high          = fmsbin2ieee(rec.high);
+            obs.low           = fmsbin2ieee(rec.low);
+            obs.close         = fmsbin2ieee(rec.close);
+            obs.volume        = fmsbin2ieee(rec.volume);
+            obs.open_interest = fmsbin2ieee(rec.open_interest);
+            asset_data.push_back(obs);
+            ++num_records_read;
+
         }
 
-        if(num_records_read != header.last_record)
+        if(num_records_read != (header.last_record-1))
         {
             sprintf(error,
-                    "Header says %d files but found %d records in file %s.",
-                    header.num_files, num_files_read, file_name);
+                    "Header says (%d, %d) files. Actually read %d records in file %s.",
+                    header.total_records, header.last_record, num_records_read, file_name);
             throw(Rcpp::exception(error));
-            return num_files_read;
+            return num_records_read;
         }
         return 0;
     };
@@ -372,40 +365,40 @@ private:
     {
         unsigned short total_records;
         unsigned short last_record;
-    }
+    };
     bool read_7_field_header(ms_7_field_header *header, FILE *in_stream)
     {
 
         char junk[28];
         bool good_read =
             ((fread(&header->total_records, sizeof(header->total_records), 1, in_stream) == 1) &&
-             (fread(&header->last_record, sizeof(header->last_record), 1, in_stream)     == 1) &&
-             (fread(&(junk[0]), sizeof(junk[0]), 24, in_stream)                          == 24));
+             (fread(&header->last_record,   sizeof(header->last_record),   1, in_stream) == 1) &&
+             (fread(&(junk[0]),             sizeof(junk[0]),              24, in_stream) == 24));
         return good_read;
     };
 
     struct ms_7_field_record
     {
-        char date[4];
-        char open[4];
-        char high[4];
-        char low[4];
-        char close[4];
-        char volume[4];
-        char open_interest[4];
+        unsigned char date[4];
+        unsigned char open[4];
+        unsigned char high[4];
+        unsigned char low[4];
+        unsigned char close[4];
+        unsigned char volume[4];
+        unsigned char open_interest[4];
     };
     bool read_7_field_rec(ms_7_field_record* rec, FILE *in_stream)
     {
         bool good_read =
-           ((fread(&(rec->date[0]),          sizeof(date[0]),          4, in_stream) == 4) &&
-            (fread(&(rec->open[0]),          sizeof(open[0]),          4, in_stream) == 4) &&
-            (fread(&(rec->high[0]),          sizeof(high[0]),          4, in_stream) == 4) &&
-            (fread(&(rec->low[0]),           sizeof(low[0]),           4, in_stream) == 4) &&
-            (fread(&(rec->close[0]),         sizeof(close[0]),         4, in_stream) == 4) &&
-            (fread(&(rec->volume[0]),        sizeof(volume[0]),        4, in_stream) == 4) &&
-            (fread(&(rec->open_interest[0]), sizeof(open_interest[0]), 4, in_stream) == 4));
+           ((fread(&(rec->date[0]),          sizeof(rec->date[0]),          4, in_stream) == 4) &&
+            (fread(&(rec->open[0]),          sizeof(rec->open[0]),          4, in_stream) == 4) &&
+            (fread(&(rec->high[0]),          sizeof(rec->high[0]),          4, in_stream) == 4) &&
+            (fread(&(rec->low[0]),           sizeof(rec->low[0]),           4, in_stream) == 4) &&
+            (fread(&(rec->close[0]),         sizeof(rec->close[0]),         4, in_stream) == 4) &&
+            (fread(&(rec->volume[0]),        sizeof(rec->volume[0]),        4, in_stream) == 4) &&
+            (fread(&(rec->open_interest[0]), sizeof(rec->open_interest[0]), 4, in_stream) == 4));
         return good_read;
-    }
+    };
 
 
     // Structure representing the header of an emaster file
@@ -420,8 +413,8 @@ private:
         char junk[192];
         bool good_read =
            ((fread(&(header->num_files), sizeof(header->num_files), 1, in_stream) == 1) &&
-            (fread(&(header->max_fnum), sizeof(header->num_files), 1, in_stream)  == 1) &&
-            (fread(&(junk[0]), sizeof(junk[0]), 188, in_stream)                   == 188));
+            (fread(&(header->max_fnum),  sizeof(header->num_files), 1, in_stream) == 1) &&
+            (fread(&(junk[0]),           sizeof(junk[0]),         188, in_stream) == 188));
         return good_read;
 
     };
@@ -603,16 +596,16 @@ private:
     {
         long int yyyymmdd = lroundf(date_float)+19000000;
         return yyyymmdd_to_date(yyyymmdd);
-    }
+    };
 
 
     Rcpp::Date yyyymmdd_to_date(long yyyymmdd)
     {
         int yyyy = yyyymmdd/10000;
-        int mm = (yyyymmdd - (yyyy*10000))/100;
-        int dd = yyyymmdd % 100;
-        return Rcpp::Date(mm, dd, yyyy)
-    }
+        int mm   = (yyyymmdd - (yyyy*10000))/100;
+        int dd   = yyyymmdd % 100;
+        return Rcpp::Date(mm, dd, yyyy);
+    };
 
 };
 
@@ -622,7 +615,7 @@ RcppExport SEXP createNorgateReader()
     BEGIN_RCPP;
 
     NorgateDirectory *ngt_dir = new NorgateDirectory();
-    Rcpp::Xptr<  NorgateDirectory > rcpp_norgate(ngt_dir, true);
+    Rcpp::XPtr<  NorgateDirectory > rcpp_norgate(ngt_dir, true);
 
     return rcpp_norgate;
     END_RCPP;
@@ -661,11 +654,11 @@ RcppExport SEXP open_emaster(SEXP rcpp_norgate_ptr, SEXP rcpp_emaster_name)
 RcppExport SEXP get_emasters(SEXP rcpp_norgate_ptr)
 {
     BEGIN_RCPP;
-    Rcpp::Xptr< NorgateDirectory > rcpp_norgate(rcpp_norgate_ptr);
-    std::set< std::string > em_names = rcpp_norgate->get_emasters();
+    Rcpp::XPtr< NorgateDirectory > rcpp_norgate(rcpp_norgate_ptr);
+    std::set< std::string > em_names = rcpp_norgate->get_emaster_files();
     Rcpp::CharacterVector rcpp_em_names(em_names.begin(), em_names.end());
 
-    return rcpp_en_names;
+    return rcpp_em_names;
     END_RCPP;
 };
 
@@ -673,59 +666,51 @@ RcppExport SEXP get_emasters(SEXP rcpp_norgate_ptr)
 RcppExport SEXP available_assets(SEXP rcpp_norgate_ptr)
 {
     BEGIN_RCPP;
-    Rcpp::Xptr< NorgateDirectory > rcpp_norgate(rcpp_norgate_ptr);
+    Rcpp::XPtr< NorgateDirectory > rcpp_norgate(rcpp_norgate_ptr);
 
-    std::set< NorgateDirectory::MSDataFile > data_files =
+    std::vector< NorgateDirectory::MSDataFile > data_files =
         rcpp_norgate->get_assets();
+    const size_t num_files = data_files.size();
 
-    //const size_t num_files = data_files.size();
+    Rcpp::CharacterVector symbols(num_files);
+    Rcpp::CharacterVector asset_names(num_files);
+    Rcpp::CharacterVector file_names(num_files);
+    Rcpp::IntegerVector   num_fields(num_files);
+    Rcpp::CharacterVector flag(num_files);
+    Rcpp::CharacterVector periodicity(num_files);
+    Rcpp::DateVector      first_date(num_files);
+    Rcpp::DateVector      last_date(num_files);
 
-    Rcpp::CharacterVector symbols;
-    Rcpp::CharacterVector asset_names;
-    Rcpp::CharacterVector file_names;
-    Rcpp::IntegerVector   num_fields;
-    Rcpp::CharacterVector flag;
-    Rcpp::CharacterVector periodicity;
-    Rcpp::DateVector      first_date;
-    Rcpp::DateVector      last_date;
-
-    for(auto itr = data_files.begin(); itr != data_files.end(); ++itr)
+    std::vector< NorgateDirectory::MSDataFile >::iterator itr = data_files.begin();
+    std::vector< NorgateDirectory::MSDataFile >::iterator end_itr = data_files.end();
+    size_t idx = 0;
+    for(; itr != end_itr; ++itr)
     {
-        symbols.push.back(itr->symbol);
-        asset_names.push_back(itr->name);
-        file_names.push_back(itr->file_name);
-        num_fields.push_back(itr->num_fields);
-        flag.push_back(itr->flag);
-        periodicity.push_back(itr->periodicity);
-        first_date.push_back(itr->first_date);
-        last_date.push_back(itr->last_date);
+        symbols[idx]     = itr->symbol;
+        asset_names[idx] = itr->name;
+        file_names[idx]  = itr->file_name;
+        num_fields[idx]  = itr->num_fields;
+        flag[idx]        = itr->flag;
+        periodicity[idx] = itr->periodicity;
+        first_date[idx]  = itr->first_date;
+        last_date[idx]   = itr->last_date;
+        ++idx;
     }
 
-    Rcpp::List df_list(8);
-    df_list[0] = symbols;
-    df_list[1] = asset_names;
-    df_list[2] = file_names;
-    df_list[3] = num_fields;
-    df_list[4] = flag;
-    df_list[5] = periodicity;
-    df_list[6] = first_date;
-    df_list[7] = last_date;
+    Rcpp::DataFrame df = 
+        Rcpp::DataFrame::create(Rcpp::Named("ticker")           = symbols,
+                                Rcpp::Named("name")             = asset_names,
+                                Rcpp::Named("data.file")        = file_names,
+                                Rcpp::Named("num.fields")       = num_fields,
+                                Rcpp::Named("flag")             = flag,
+                                Rcpp::Named("periodicity")      = periodicity,
+                                Rcpp::Named("start.date")       = first_date,
+                                Rcpp::Named("end.date")         = last_date,
+                                Rcpp::Named("stringsAsFactors") = false);
 
-    Rcpp::CharacterVector df_names;
-    df_names.push_back("ticker");
-    df_names.push_back("name");
-    df_names.push_back("data.file");
-    df_names.push_back("num.fields");
-    df_names.push_back("flag");
-    df_names.push_back("periodicity");
-    df_names.push_back("first.date");
-    df_names.push_back("last.date");
-
-    Rcpp::DataFrame df(df_list);
-    df.attr("names")     = df_names;
     df.attr("row.names") = symbols;
 
-
+    return df;
 
     END_RCPP;
 };
@@ -735,70 +720,69 @@ RcppExport SEXP get_data_from_file(SEXP rcpp_norgate_ptr, SEXP rcpp_data_filenam
 {
     BEGIN_RCPP;
     char error[1024];
-     Rcpp::Xptr< NorgateDirectory > rcpp_norgate(rcpp_norgate_ptr);
+    Rcpp::XPtr< NorgateDirectory > rcpp_norgate(rcpp_norgate_ptr);
 
-    Rcpp::String data_filename(rcpp_asset_id);
+    std::string data_filename = Rcpp::as< std::string >(rcpp_data_filename);
     std::vector< NorgateDirectory::MS7FieldRec > asset_data;
-    int read_stat = get_7_field_data(file_name.get_cstring(), &asset_data);
+    int read_stat =
+        rcpp_norgate->get_7_field_data(data_filename.c_str(), asset_data);
     if(0 != read_stat)
     {
-        sprintf(error, "Could not read data in file %s", data_filename.as_cstring());
+        sprintf(error, "Could not read data in file %s", data_filename.c_str());
         throw(Rcpp::exception(error));
     }
 
-    Rcpp::DateVector date;
-    Rcpp::NumericVector open;
-    Rcpp::NumericVector high;
-    Rcpp::NumericVector low;
-    Rcpp::NumericVector close;
-    Rcpp::NumericVector volume;
-    Rcpp::NumericVector open_interest;
+    size_t num_obs = asset_data.size();
 
-    for(auto itr = asset_data.begin(); itr != asset_data.end(); ++itr)
+    Rcpp::DateVector    date(num_obs);
+    Rcpp::NumericVector open(num_obs);
+    Rcpp::NumericVector high(num_obs);
+    Rcpp::NumericVector low(num_obs);
+    Rcpp::NumericVector close(num_obs);
+    Rcpp::NumericVector volume(num_obs);
+    Rcpp::NumericVector open_interest(num_obs);
+
+    std::vector< NorgateDirectory::MS7FieldRec >::iterator itr = asset_data.begin();
+    std::vector< NorgateDirectory::MS7FieldRec >::iterator end_itr = asset_data.end();
+    size_t idx = 0;
+    for(; itr != end_itr; ++itr)
     {
-        date.push_back(itr->date);
-        open.push_back(double(itr->open));
-        high.push_back(double(itr->high));
-        low.push_back(double(itr->low));
-        close.push_back(double(itr->close));
-        volume.push_back(double(itr->volume));
-        open_interest.push_back(double(itr->open_interest));
+        date[idx]           = itr->date;
+        open[idx]           = double(itr->open);
+        high[idx]           = double(itr->high);
+        low[idx]            = double(itr->low);
+        close[idx]          = double(itr->close);
+        volume[idx]         = double(itr->volume);
+        open_interest[idx]  = double(itr->open_interest);
+        ++idx;
     }
 
-    Rcpp::List df_list(7);
-    df_list[0] = date;
-    df_list[1] = open;
-    df_list[2] = high;
-    df_list[3] = low;
-    df_list[4] = close;
-    df_list[5] = volume;
-    df_list[6] = open_interest;
+    Rcpp::DataFrame df = Rcpp::DataFrame::create(
+            Rcpp::Named("tradedate")        = date,
+            Rcpp::Named("open")             = open,
+            Rcpp::Named("high")             = high,
+            Rcpp::Named("low")              = low,
+            Rcpp::Named("close")            = close,
+            Rcpp::Named("volume")           = volume,
+            Rcpp::Named("open.interest")    = open_interest);
 
-    Rcpp::CharacterVector df_names;
-    df_names.push_back("date");
-    df_names.push_back("open");
-    df_names.push_back("high");
-    df_names.push_back("low");
-    df_names.push_back("close");
-    df_names.push_back("volume");
-    df_names.push_back("open.interest");
 
     Rcpp::CharacterVector df_rownames;
-    for(auto itr = date.begin(); itr != date.end(); ++itr)
+    Rcpp::DateVector::iterator date_itr = date.begin();
+    Rcpp::DateVector::iterator end_date_itr = date.end();
+    for(; date_itr != end_date_itr; ++date_itr)
     {
         char date_name[64];
         sprintf(date_name,
-                "%0.4d-%0.2d-%0.2d",
-                itr->getYear(), itr->getMonth(), itr->getDay());
+                "%.4d-%.2d-%.2d",
+                date_itr->getYear(), date_itr->getMonth(), date_itr->getDay());
         df_rownames.push_back(Rcpp::String(date_name));
     }
 
-    Rcpp::DataFrame df(df_list);
-    df.attr("names") = df_names;
     df.attr("row.names") = df_rownames;
+
     return df;
     END_RCPP;
 };
-
 
 

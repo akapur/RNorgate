@@ -6,3 +6,6 @@ RNorgate.Rproj
 src/*.o
 src/*.so
 src/*.dll
+Makefile
+src-i386/
+src-x86_64/

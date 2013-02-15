@@ -5,8 +5,7 @@ Version: 0.1
 Date: 2013-02-01
 Author: Ashwin Kapur <ashwin.kapur@gmail.com>
 Maintainer: Ashwin kapur <ashwin.kapur@gmail.com>
-Description: Reads directories containing financial data provided by Norgate
-which is in Metastock format.
+Description: Reads directories containing financial data provided by Norgate.
 License: GPL (version 2 or later)
 Depends: Rcpp (>= 0.10.1)
 LinkingTo: Rcpp
