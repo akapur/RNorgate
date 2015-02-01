@@ -10,7 +10,7 @@ multiplies the space needed by a large multiple and running the convertor
 automatically is flaky. Not all data is exported to the csv files and there 
 are no indices to the csv files.
 
-This packages allows you to read the binary files in Metastock like format
+This package allows you to read the binary files in Metastock like format
 directly from R. With minor modifications it could also be used to read data
 from other vendors who provide or save data in Metastock binary format.
 
