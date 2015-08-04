@@ -5,10 +5,12 @@
 #include <set>
 #include <cstdio>
 
+#include <unistd.h>
 #include <fcntl.h>
 #include <dirent.h>
 #include <errno.h>
 #include <sys/param.h>
+
 
 
 class NorgateDirectory
