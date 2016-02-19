@@ -3,11 +3,11 @@
 \alias{RNorgate}
 \docType{package}
 \title{
-What the package does (short line)
+Reads data provided by Norgate Investor Services.
 }
 \description{
-More about what it does (maybe more than one line)
-~~ A concise (1-5 lines) description of the package ~~
+    Reads data provided by Norgate Investor Services http://www.premiumdata.net
+    Can likely be used to read data from any source in Metastock format.
 }
 \details{
 \tabular{ll}{
@@ -15,25 +15,30 @@ Package: \tab RNorgate\cr
 Type: \tab Package\cr
 Version: \tab 1.0\cr
 Date: \tab 2013-02-01\cr
-License: \tab What license is it under?\cr
+License: \tab GPL\cr
 }
-~~ An overview of how to use the package, including the most important functions ~~
+Pretty straightforward package. Reads data. That's it.
 }
 \author{
-Who wrote it
+Ashwin Kapur <ashwin.kapur@gmail.com>
 
-Maintainer: Who to complain to <yourfault@somewhere.net>
+Maintainer: Ashwin Kapur <ashwin.kapur@gmail.com>
 }
 \references{
-~~ Literature or other references for background information ~~
+premiumdata.net, The website for Norgate Investor Services.
 }
-~~ Optionally other standard keywords, one per line, from file KEYWORDS in the R ~~
-~~ documentation directory ~~
 \keyword{ package }
 \seealso{
-~~ Optional links to other man pages, e.g. ~~
-~~ \code{\link[<pkg>:<pkg>-package]{<pkg>}} ~~
 }
 \examples{
-%% ~~ simple examples of the most important functions ~~
+library(RNorgate)
+
+data.rep = createNorgate("PATH_TO_METASTOCK_DIR")
+
+# Next line provides list of assets for which data can be read from data files
+# in the directory
+assets(data.rep)
+
+## Gets data and puts it into a data frame
+data.for.asset = data.rep["TICKER"]
 }
