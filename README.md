@@ -17,4 +17,4 @@ It works for me. No promises on it being stable or anything like that. Use
 at your own risk.
 
 I have no affiliation whatsoever to Norgate Investor Services or Metastock.
-I'm simply a user of Norgate's services.
+I'm simply a very happy user of Norgate's services.
