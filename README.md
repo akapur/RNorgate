@@ -1,5 +1,12 @@
 # RNorgate
 
+I haven't used this for a long time. It probably has some serious bugs
+and other problems with it. I've had reports of it not compiling on
+Windows. There be dragons here. I not longer use it. It's probably
+not too hard to make it work. If you find this repository useful, please
+fork it.
+
+
 Norgate Investor Services (http://www.premiumdata.net) provides daily 
 data on a variety of instruments in files Metastock format.
 
